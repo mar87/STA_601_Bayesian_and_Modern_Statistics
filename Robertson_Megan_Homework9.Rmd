@@ -1,0 +1,212 @@
+---
+title: "Homework 9"
+author: "Megan Robertson"
+date: "Wednesday, November 04, 2015"
+output: pdf_document
+---
+
+###Defining the Model
+The model is defined as:
+
+\begin{center}
+\begin{math}
+Y_{ij} \sim Poisson(\lambda_i \theta t_{ij}) \newline
+\theta \sim Gamma(a, b) \newline
+\lambda_i \sim Gamma(\phi, \phi) \newline
+\phi \sim Gamma(c, d)
+\end{math}
+\end{center}
+
+where $Y_{ij}$ is the count of candy, $\theta$ is the overall effect that accounts for variation between the individuals (age, personality types, other differences, etc.), $\lambda_i$ is the costume effect, and $\phi$ is used to get different parameters for $\lambda$ for each costume type.
+
+###Likelihood and Full Conditionals
+\begin{math}
+L(Y_{ij} | \lambda_i, \theta, \phi) = \prod_i \prod_j \frac{(\lambda_i \theta t_{ij})^{(y_{ij})}}{y_{ij}} \newline
+= \frac{(\lambda_i \theta t_{ij})^{\Sigma_i \Sigma_j y_{ij}}}{\prod_i \prod_j y_{ij}!}
+\end{math}
+
+\begin{math}
+\pi(\theta) \sim (\theta)^{\Sigma_i \Sigma_j y_{ij}} exp(\Sigma_i \Sigma_j (-\lambda_i \theta t_{ij})) \theta^{a-1} exp(-b \theta) \newline
+= \theta^{\Sigma_i \Sigma_j y_{ij} + a - 1}exp(-\theta(\Sigma_i \Sigma_j \lambda_i t_{ij} + b)) \newline
+\theta \sim Gamma(\Sigma_i \Sigma_j y_{ij} + a, \Sigma_i \Sigma_j \lambda_i t_{ij} + b)
+\end{math}
+
+\begin{math}
+\pi(\lambda_i) \sim \lambda_i^{\Sigma_j y_{ij}}exp(\Sigma_j \lambda_i \theta t_{ij}) \lambda_i^{\phi - 1}exp(-b \phi) \newline
+= (\lambda_i)^{\Sigma_j y_{ij} + \phi - 1} exp(-\lambda_i(\Sigma_j \theta t_{ij} + \phi)) \newline
+\pi(\lambda_i) \sim Gamma(\Sigma_j y_{ij} + \phi, \Sigma_j \theta t_{ij} + \phi)
+\end{math}
+
+\begin{math}
+\pi(\phi) \sim \lambda_i^{\phi - 1} exp(-b \phi)\phi^{c-1}exp(-d\phi) \newline
+= \lambda_i^{\phi - 1} exp(-\phi(b+d))\phi^{c-1}
+\end{math}
+
+The full conditional for $\phi$ is not conjugate, so it is necessary to use the Metropolis algorithm in the code together with the Gibbs sampler. 
+
+###Results
+```{r, echo=FALSE}
+#simulate data
+set.seed(17)
+time.vector = c();
+for (i in 1:100){
+  time.vector[i] = rpois(n=1, lambda=2)
+  while (time.vector[i]==0){
+    time.vector[i] = rpois(n=1, lambda=2)
+  }
+}
+
+lambda.1 = rgamma(n=10, shape = 10, rate =1) #generating random rates
+lambda.vector2 = rep(lambda.1, each = 10)
+possible.lambda = seq(0.5, 20, length.out=40)
+
+sample.lambda = time.vector*lambda.vector2
+lambda.true = matrix(sample.lambda, nrow = 10, byrow=T)
+true.lambda = colMeans(lambda.true)
+candy.count=c()
+for (j in (1:length(sample.lambda))){
+  candy.count[j] = rpois(n=1, lambda = sample.lambda[j])
+}
+data = matrix(candy.count, nrow = 10, byrow=T)
+time = matrix(time.vector, nrow = 10, byrow=T)
+
+#defining objects to be used in the Gibbs sampler
+R = 5000 #number of iterations for Gibbs
+lambda = matrix(0, nrow = R+1, ncol=10); phi=c(); theta=c()
+mu = matrix(0, nrow=R+1, ncol=10)
+lambda[1,] = rep(1,10); phi[1] = 1; theta[1] = 1
+
+reject = 0; R =5000
+lambda = matrix(0, nrow = R+1, ncol=10); phi=c(); theta=c()
+lambda[1,] = rep(1,10); phi[1]=1; theta[1] = 1; c = d=1/2; a = b= 1
+kappa = 10; phi.star = 0
+
+for (i in (1:R)){
+  #Metropolis for phi
+  phi.star = 0
+  while (phi.star<=0){
+    phi.star = rnorm(n = 1, mean = phi[i], sd = kappa)
+  }
+  numerator = prod(dgamma(lambda[i,], phi.star, phi.star))*dgamma(phi.star, c, d)
+  denominator = prod(dgamma(lambda[i,], phi[i], phi[i]))*dgamma(phi[i], c, d)
+  alpha = min(log(1), log(numerator/denominator))
+  test.prob = runif(n=1, 0, 1)
+  if (log(test.prob)<alpha){
+    phi[i+1] = phi.star
+    } else {
+    phi[i+1] = phi[i]
+    reject = reject + 1
+  }
+  
+  #getting the new theta
+  theta[i+1] = rgamma(n=1, shape = sum(data) + a, sum(lambda[i,]*time) + b)
+  
+  #getting the new lambda
+  lambda[i+1, ] = rgamma(n=10, shape = colSums(data) + phi[i+1], rate = theta[i+1]*colSums(time) + phi[i+1])
+}
+
+lambda.vector = colMeans(lambda)
+par(mfrow=c(1,2))
+plot(lambda[,1], type="l") #plotting the lambda one rates
+plot(theta, type="l")
+par(mfrow=c(1,1))
+plot(lambda[,1]*theta, type="l")
+```
+
+The first pair of plots shows that the posteriors for the $\theta$ and $\lambda_1$ values resulting from the MCMC method implemented do not converge. However, the trace plot of $\lambda_1 \theta$ shows that the product of these two parameter distributions converge. This occurs since introducing more parameters into the model can reduce autocorrelation.
+
+```{r, echo=FALSE, fig.height=5, fig.width=5}
+MSE = 0
+for (k in (1:length(lambda.1))){
+  MSE = MSE + ((lambda.1[k]-lambda.vector[k])^2)/length(lambda.1)
+}
+plot(lambda.vector, main="Lambda Estimates and True Lambda Values", ylim=c(0, 17), 
+     ylab="Lambda", col="red", pch =16)
+points(lambda.1, col="blue", pch=16)
+legend("topright", c("Estimate", "True"), pch=c(16,16), col=c("red", "blue"))
+```
+
+The MSE for the $\lambda_i$ values was found to be large at 76.65104. The plot above shows that the MCMC method implemented results in estimates for the $\lambda_i$ values that are significantly smaller than the values of $\lambda_i$ that were used to generate the data. This suggests that the Metropolis algorithm may not be appropriate to use in the MCMC method. The Metropolis algorithm assumes that $\phi^*$ is drawn from a symmetric distribution, and this may not be an appropriate assumption to make. It is also possible that the parameter values selected for $\theta$ and $\phi$ can be improved. The MSE did not change very much when I changed the value for kappa in the Metropolis portion of the code.
+
+###Code Section
+```{r, eval = FALSE}
+#simulate data
+set.seed(17)
+time.vector = c();
+for (i in 1:100){
+  time.vector[i] = rpois(n=1, lambda=2)
+  while (time.vector[i]==0){
+    time.vector[i] = rpois(n=1, lambda=2)
+  }
+}
+
+lambda.1 = rgamma(n=10, shape = 10, rate =1) #generating random rates
+lambda.vector2 = rep(lambda.1, each = 10)
+possible.lambda = seq(0.5, 20, length.out=40)
+
+sample.lambda = time.vector*lambda.vector2
+candy.count=c()
+for (j in (1:length(sample.lambda))){
+  candy.count[j] = rpois(n=1, lambda = sample.lambda[j])
+}
+data = matrix(candy.count, nrow = 10, byrow=T)
+time = matrix(time.vector, nrow = 10, byrow=T)
+
+#defining objects to be used in the Gibbs sampler
+R = 5000 #number of iterations for Gibbs
+lambda = matrix(0, nrow = R+1, ncol=10); phi=c(); theta=c()
+mu = matrix(0, nrow=R+1, ncol=10)
+lambda[1,] = rep(1,10); phi[1] = 1; theta[1] = 1
+
+reject = 0; R =5000
+lambda = matrix(0, nrow = R+1, ncol=10); phi=c(); theta=c()
+lambda[1,] = rep(1,10); phi[1]=1; theta[1] = 1; c = d=1/2; a = b= 1
+kappa = 10; phi.star = 0
+
+for (i in (1:R)){
+  #Metropolis for phi
+  phi.star = 0
+  while (phi.star<=0){
+    phi.star = rnorm(n = 1, mean = phi[i], sd = kappa)
+  }
+  numerator = prod(dgamma(lambda[i,], phi.star, phi.star))*dgamma(phi.star, 
+    c, d)
+  denominator = prod(dgamma(lambda[i,], phi[i], phi[i]))*dgamma(phi[i], c, d)
+  alpha = min(log(1), log(numerator/denominator))
+  test.prob = runif(n=1, 0, 1)
+  if (log(test.prob)<alpha){
+    phi[i+1] = phi.star
+    } else {
+    phi[i+1] = phi[i]
+    reject = reject + 1
+  }
+  
+  #getting the new theta
+  theta[i+1] = rgamma(n=1, shape = sum(data) + a, sum(lambda[i,]*time) + b)
+  
+  #getting the new lambda
+  lambda[i+1, ] = rgamma(n=10, shape = colSums(data) + phi[i+1], 
+      rate = theta[i+1]*colSums(time) + phi[i+1])
+}
+
+lambda.vector = colMeans(lambda)
+
+par(mfrow=c(1,2))
+plot(lambda[,1], type="l") #plotting the lambda one rates
+plot(theta, type="l")
+par(mfrow=c(1,1))
+plot(lambda[,1]*theta, type="l")
+
+MSE = 0
+for (k in (1:length(lambda.1))){
+  MSE = MSE + ((lambda.1[k]-lambda.vector[k])^2)/length(lambda.1)
+}
+plot(lambda.vector, main="Lambda Estimates and True Lambda Values", ylim=c(0, 17), 
+     ylab="Lambda", col="red", pch =16)
+points(lambda.1, col="blue", pch=16)
+legend("topright", c("Estimate", "True"), pch=c(16,16), col=c("red", "blue"))
+```
+I got a lot of help from classmates on this assignment in terms of figuring out a model and determining the code necessary for the different methods. I also consulted with online sources.
+
+
+Prior to executing the method above, I was working with a different model in order to approach this problem. However, it is pretty challenging to code as it involves using the griddy Gibbs method. I worked on this model with a peer for a while, and I wanted to include the derivations in case the method above was incorrect. I also wanted to include it because of the amount of time and energy that was devoted to it. The last pages are relevant to this model.
